@@ -1,130 +1,170 @@
+version: "3.8"
+
 services:
-  # SOAP Adapter
-  soap-adapter:
-    build: ./soap-adapter
-    container_name: soap-adapter
-    ports:
-      - "8081:8080"
-    depends_on:
-      - kafka
-    networks:
-      - swiftlogistics
-
-  # WMS Adapter
-  wms-adapter:
-    build: ./wms-adapter
-    container_name: wms-adapter
-    ports:
-      - "8082:8080"
-    depends_on:
-      - kafka
-    networks:
-      - swiftlogistics
-
-  # API Gateway
-  api-gateway:
-    build: ./api-gateway
-    container_name: api-gateway
-    ports:
-      - "8080:8080"
-    depends_on:
-      - order-service
-      - ros-service
-      - notification-service
-    networks:
-      - swiftlogistics
-
-  # Order Service
-  order-service:
-    build: ./order-service
-    container_name: order-service
-    ports:
-      - "8083:8080"
-    depends_on:
-      - kafka
-      - postgres
+  # ---------------- POSTGRES DATABASES ----------------
+  order-db:
+    image: postgres:15
+    container_name: order-db
+    restart: always
     environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/orders
-      - SPRING_DATASOURCE_USERNAME=postgres
-      - SPRING_DATASOURCE_PASSWORD=postgres
-    networks:
-      - swiftlogistics
-
-  # ROS Service + Mobile Frontend
-  ros-service:
-    build: ./ros-service
-    container_name: ros-service
+      POSTGRES_USER: pulasthi
+      POSTGRES_PASSWORD: 2002
+      POSTGRES_DB: order_db
     ports:
-      - "8084:8080"
-      - "3001:3000" # Mobile app React Native dev server
-    depends_on:
-      - kafka
-    networks:
-      - swiftlogistics
+      - "5433:5432"
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
 
-  # Notification Service
-  notification-service:
-    build: ./notification-service
-    container_name: notification-service
+  ros-db:
+    image: postgres:15
+    container_name: ros-db
+    restart: always
+    environment:
+      POSTGRES_USER: pulasthi
+      POSTGRES_PASSWORD: 2002
+      POSTGRES_DB: ros_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - ros_db_data:/var/lib/postgresql/data
+
+  # ---------------- ZOOKEEPER ----------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    restart: always
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  # ---------------- KAFKA ----------------
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    restart: always
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
     ports:
       - "8085:8080"
     depends_on:
       - kafka
-    networks:
-      - swiftlogistics
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
 
-  # CMS Frontend (Client Portal)
-  cms-frontend:
-    build: ./cms-frontend
-    container_name: cms-frontend
+  # ---------------- SPRING BOOT SERVICES ----------------
+  api-gateway:
+    build: ../api-gateway
+    container_name: api-gateway
+    restart: always
+    depends_on:
+      - order-service
+      #- notification-service
+      #- ros-mobile-backend
+    ports:
+      - "8080:8080"
+
+  order-service:
+    build: ../order-service
+    container_name: order-service
+    restart: always
+    depends_on:
+      - order-db
+      - kafka
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://order-db:5432/order_db
+      SPRING_DATASOURCE_USERNAME: pulasthi
+      SPRING_DATASOURCE_PASSWORD: 2002
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    ports:
+      - "8081:8081"
+
+  notification-service:
+    build: ../notification-service
+    container_name: notification-service
+    restart: always
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    ports:
+      - "8082:8082"
+
+  soap-adapter:
+    build: ../soap-adapter
+    container_name: soap-adapter
+    restart: always
+    ports:
+      - "8083:8083"
+
+  cms:
+    build: ../cms
+    container_name: cms
+    restart: always
+    ports:
+      - "8084:8084"
+
+  wms-adapter:
+    build: ../wms-adapter
+    container_name: wms-adapter
+    restart: always
+    depends_on:
+      - wms
+    ports:
+      - "8086:8086"
+
+  wms:
+    build: ../wms
+    container_name: wms
+    restart: always
+    ports:
+      - "8087:8087"
+
+  ros-mobile-backend:
+    build: ../ros-mobile-backend
+    container_name: ros-mobile-backend
+    restart: always
+    depends_on:
+      - ros-db
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://ros-db:5432/ros_db
+      SPRING_DATASOURCE_USERNAME: pulasthi
+      SPRING_DATASOURCE_PASSWORD: 2002
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+    ports:
+      - "8088:8088"
+
+  mobile-frontend:
+    build: ../mobile-frontend
+    container_name: mobile-frontend
+    restart: always
+    ports:
+      - "3001:3000"
+
+  client:
+    build: ../client
+    container_name: client
+    restart: always
     ports:
       - "3000:3000"
-    depends_on:
-      - api-gateway
-    networks:
-      - swiftlogistics
 
-  # Kafka + Zookeeper
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-    ports:
-      - "2181:2181"
-    networks:
-      - swiftlogistics
-
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: kafka
-    ports:
-      - "9092:9092"
-    depends_on:
-      - zookeeper
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-    networks:
-      - swiftlogistics
-
-  # Postgres DB (for orders)
-  postgres:
-    image: postgres:15
-    container_name: postgres
-    environment:
-      POSTGRES_DB: orders
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    networks:
-      - swiftlogistics
-
-networks:
-  swiftlogistics:
-    driver: bridge
-
+volumes:
+  order_db_data:
+  ros_db_data:
